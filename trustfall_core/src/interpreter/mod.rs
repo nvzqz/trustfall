@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
+use std::{collections::BTreeMap, fmt::Debug, future::IntoFuture, sync::Arc};
 
 use itertools::Itertools;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -735,6 +735,51 @@ pub trait Adapter<'vertex> {
     ) -> ContextOutcomeIterator<'vertex, V, bool>;
 }
 
+/// Asynchronous [`Adapter`].
+pub trait AsyncAdapter<'vertex> {
+    /// Async [`Adapter::Vertex`].
+    type Vertex: VertexFuture<'vertex>;
+
+    /// Async [`Adapter::resolve_starting_vertices`].
+    fn resolve_starting_vertices(
+        &self,
+        edge_name: &Arc<str>,
+        parameters: &EdgeParameters,
+        resolve_info: &ResolveInfo,
+    ) -> impl IntoFuture<Output = VertexIterator<'vertex, Self::Vertex>> + Send + Sync;
+
+    /// Async [`Adapter::resolve_property`].
+    fn resolve_property<V: AsVertex<Self::Vertex> + 'vertex>(
+        &self,
+        contexts: ContextIterator<'vertex, V>,
+        type_name: &Arc<str>,
+        property_name: &Arc<str>,
+        resolve_info: &ResolveInfo,
+    ) -> impl IntoFuture<Output = ContextOutcomeIterator<'vertex, V, FieldValue>> + Send + Sync;
+
+    /// Async [`Adapter::resolve_neighbors`].
+    fn resolve_neighbors<V: AsVertex<Self::Vertex> + 'vertex>(
+        &self,
+        contexts: ContextIterator<'vertex, V>,
+        type_name: &Arc<str>,
+        edge_name: &Arc<str>,
+        parameters: &EdgeParameters,
+        resolve_info: &ResolveEdgeInfo,
+    ) -> impl IntoFuture<
+        Output = ContextOutcomeIterator<'vertex, V, VertexIterator<'vertex, Self::Vertex>>,
+    > + Send
+           + Sync;
+
+    /// Async [`Adapter::resolve_coercion`].
+    fn resolve_coercion<V: AsVertex<Self::Vertex> + 'vertex>(
+        &self,
+        contexts: ContextIterator<'vertex, V>,
+        type_name: &Arc<str>,
+        coerce_to_type: &Arc<str>,
+        resolve_info: &ResolveInfo,
+    ) -> impl IntoFuture<Output = ContextOutcomeIterator<'vertex, V, bool>> + Send + Sync;
+}
+
 /// Attempt to dereference a value to a `&V`, returning `None` if the value did not contain a `V`.
 ///
 /// This trait allows types that may contain a `V` to be projected down to a `Option<&V>`.
@@ -756,6 +801,20 @@ pub trait AsVertex<V>: Debug + Clone {
     /// If this method returned `Some(v)`, prior [`AsVertex::as_vertex()`] calls for the same `V`
     /// are guaranteed to have returned `Some(&v)` as well.
     fn into_vertex(self) -> Option<V>;
+}
+
+/// The requirements of an [`AsyncAdapter::Vertex`].
+///
+/// This is auto-implemented for all futures that meet the required traits.
+pub trait VertexFuture<'vertex>: IntoFuture + Clone + Debug + 'vertex
+where
+    <Self as IntoFuture>::Output: Clone + Debug + 'vertex,
+{
+}
+
+impl<'v, V: IntoFuture + Clone + Debug + 'v> VertexFuture<'v> for V where
+    V::Output: Clone + Debug + 'v
+{
 }
 
 /// Allow bidirectional conversions between a type `V` and the type implementing this trait.
